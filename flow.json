@@ -183,6 +183,13 @@
 				"type": "file",
 				"location": "fbhorseracedev1.pkey"
 			}
+		},
+		"fbhorseracedev2": {
+			"address": "8abec69aecbca039",
+			"key": {
+				"type": "file",
+				"location": "fbhorseracedev2.pkey"
+			}
 		}
 	},
 	"deployments": {

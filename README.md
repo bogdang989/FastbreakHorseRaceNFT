@@ -22,7 +22,7 @@ List accounts:
 Add a deployment:
 `flow config add deployment`
 
-Create a contest:
+Create a contest (ADMIN):
 `flow transactions send .\cadence\transactions\create_contest.cdc "NBA Finals Game 1" "fb-123e4567-e89b-12d3-a456-426614174000" "FLOW" 1.00 1731465600.0 --signer $SIGNER`
 
 List contests:
@@ -40,12 +40,14 @@ Add entry:
 Preview payouts:
 `flow scripts execute .\cadence\scripts\preview_payout.cdc $CONTRACTADDR 3 "Nuggets"`
 
-Hide contest from UI:
+Execute payouts (ADMIN):
+`flow transactions send .\cadence\transactions\payout_winners.cdc 2 "Nuggets" --signer fbhorseracedev1 --network testnet`
+
+Hide contest from UI (ADMIN):
 `flow transactions send .\cadence\transactions\toggle_hidden.cdc 1 --signer $SIGNER`
 
-Delete a contest NFT:
+Delete a contest NFT (ADMIN):
 `flow transactions send .\cadence\transactions\destroy_contest.cdc 1 --signer $SIGNER`
-
 
 
 ## Usage (Implemented so far)
@@ -57,7 +59,7 @@ Submit an entry
 - Pay entry and submit a TS username as your entry
 
 Payout (Admin)
-- Distribute winnings based on the actual results
+- Distribute winnings based on the actual results to all winning wallets
 
 Destroy a contest (Admin)
 - Either hide for UI or completely destroy NFT
