@@ -176,11 +176,23 @@
 				"type": "file",
 				"location": "emulator-account.pkey"
 			}
+		},
+		"fbhorseracedev1": {
+			"address": "6ed97f47fd46a0e6",
+			"key": {
+				"type": "file",
+				"location": "fbhorseracedev1.pkey"
+			}
 		}
 	},
 	"deployments": {
 		"emulator": {
 			"acc1": [
+				"FastbreakHorseRace"
+			]
+		},
+		"testnet": {
+			"fbhorseracedev1": [
 				"FastbreakHorseRace"
 			]
 		}

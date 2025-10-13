@@ -1,5 +1,18 @@
 ## FastbreakHorseRaceNFT
 
+Create a contest tied to a Fastbreak daily run where people predict which Topshot user will win the daily fastbreak run. 
+Contract handles buy-ins and entry tracking. 
+The real time Fastbreak data is pulled from Topshot API.
+
+Set variables for later
+TESTNET:
+`$SIGNER = "fbhorseracedev1"`
+`$CONTRACTADDR = "0x6ed97f47fd46a0e6"`
+
+EMULATOR:
+`$SIGNER = "acc1"`
+`$CONTRACTADDR = "0x179b6b1cb6755e31"`
+
 Update contract:
 `flow project deploy --network testnet --update `
 
@@ -10,25 +23,30 @@ Add a deployment:
 `flow config add deployment`
 
 Create a contest:
-`flow transactions send .\cadence\transactions\create_contest.cdc "NBA Finals Game 1" "fb-123e4567-e89b-12d3-a456-426614174000" "FLOW" 1.00 1731465600.0 --signer acc1`
+`flow transactions send .\cadence\transactions\create_contest.cdc "NBA Finals Game 1" "fb-123e4567-e89b-12d3-a456-426614174000" "FLOW" 1.00 1731465600.0 --signer $SIGNER`
 
 List contests:
-`flow scripts execute .\cadence\scripts\list_contests.cdc 0x179b6b1cb6755e31`
+`flow scripts execute .\cadence\scripts\list_contests.cdc $CONTRACTADDR`
 
 Get contest info:
-`flow scripts execute .\cadence\scripts\get_contest_info.cdc 0x179b6b1cb6755e31 1`
+`flow scripts execute .\cadence\scripts\get_contest_info.cdc $CONTRACTADDR 1`
 
 Get contest entries:
-`flow scripts execute .\cadence\scripts\get_contest_entries.cdc 0x179b6b1cb6755e31 1`
+`flow scripts execute .\cadence\scripts\get_contest_entries.cdc $CONTRACTADDR 1`
 
 Add entry:
-`flow transactions send .\cadence\transactions\add_entry.cdc 0x179b6b1cb6755e31 3 "Nuggets" --signer acc1`
+`flow transactions send .\cadence\transactions\add_entry.cdc $CONTRACTADDR 3 "Nuggets" --signer $SIGNER`
 
 Preview payouts:
-`flow scripts execute .\cadence\scripts\preview_payout.cdc 0x179b6b1cb6755e31 3 "Nuggets"`
+`flow scripts execute .\cadence\scripts\preview_payout.cdc $CONTRACTADDR 3 "Nuggets"`
 
 Hide contest from UI:
-`flow transactions send .\cadence\transactions\toggle_hidden.cdc 1 --signer acc1`
+`flow transactions send .\cadence\transactions\toggle_hidden.cdc 1 --signer $SIGNER`
+
+Delete a contest NFT:
+`flow transactions send .\cadence\transactions\destroy_contest.cdc 1 --signer $SIGNER`
+
+
 
 ## Usage (Implemented so far)
 

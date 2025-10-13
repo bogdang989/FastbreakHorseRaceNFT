@@ -24,26 +24,25 @@ transaction(
       ?? panic("Contest not found")
     let contest = anyContest as! &FastbreakHorseRace.NFT
 
-    // Only FLOW is supported in this simplified transaction
+    // Only FLOW supported in this simplified tx
     if contest.buyInCurrency != "FLOW" {
       panic("This add_entry.cdc supports only FLOW buy-ins. Contest requires ".concat(contest.buyInCurrency))
     }
 
-    // Withdraw buy-in from the signer's FlowToken vault
+    // Withdraw exact buy-in from signer's Flow vault
     let flowVault = signer.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
       from: /storage/flowTokenVault
     ) ?? panic("Signer has no FlowToken vault at /storage/flowTokenVault")
 
     let payment <- flowVault.withdraw(amount: contest.buyInAmount) // @FlowToken.Vault
 
-    // Deposit into contract treasury (upcast to interface type)
-    FastbreakHorseRace.depositBuyIn(
-      currency: "FLOW",
-      payment: <- (payment as @{FungibleToken.Vault})
-    )
-
-    // Record entry
+    // Atomic: funds → treasury AND entry recorded
     let now: UFix64 = getCurrentBlock().timestamp
-    contest.addEntry(wallet: signer.address, prediction: prediction, time: now)
+    contest.submitEntry(
+      wallet: signer.address,
+      prediction: prediction,
+      payment: <- (payment as @{FungibleToken.Vault}),
+      time: now
+    )
   }
 }

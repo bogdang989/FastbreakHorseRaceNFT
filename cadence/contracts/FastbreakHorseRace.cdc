@@ -2,6 +2,7 @@ import "NonFungibleToken"
 import "FungibleToken"
 import "ViewResolver"
 import "MetadataViews"
+import "FlowToken"
 
 access(all) contract FastbreakHorseRace: NonFungibleToken {
 
@@ -62,11 +63,34 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             self.entries = []
         }
 
-        // Add an entry before the contest starts
-        access(all) fun addEntry(wallet: Address, prediction: String, time: UFix64) {
+        // INTERNAL: append an entry (no payment) — only callable from this contract.
+        access(contract) fun addEntry(wallet: Address, prediction: String, time: UFix64) {
             pre {
                 time < self.startTime: "Contest already started"
             }
+            let e = Entry(wallet: wallet, prediction: prediction, timeOfEntry: time)
+            self.entries.append(e)
+        }
+
+        // PUBLIC: atomic entry + payment
+        access(all) fun submitEntry(
+            wallet: Address,
+            prediction: String,
+            payment: @{FungibleToken.Vault},
+            time: UFix64
+        ) {
+            pre {
+                time < self.startTime: "Contest already started"
+                payment.balance == self.buyInAmount: "Payment must equal buy-in amount"
+            }
+
+            // 1) Deposit the funds to the contract treasury (per currency)
+            FastbreakHorseRace.depositBuyIn(
+                currency: self.buyInCurrency,
+                payment: <- payment
+            )
+
+            // 2) Record the entry
             let e = Entry(wallet: wallet, prediction: prediction, timeOfEntry: time)
             self.entries.append(e)
         }
@@ -169,7 +193,6 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         access(all) fun createEmptyCollection(): @{NonFungibleToken.Collection} {
             return <- FastbreakHorseRace.createEmptyCollection(nftType: Type<@FastbreakHorseRace.NFT>())
         }
-
     }
 
     // -------------------------
@@ -230,7 +253,6 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             let nftRef = anyRef as! &FastbreakHorseRace.NFT
             let entries = nftRef.entries
 
-            // winners by exact prediction match (Cadence 1.0: predicate must be view fun)
             let winners = entries.filter(view fun (element: FastbreakHorseRace.Entry): Bool {
                 return element.prediction == winningPrediction
             })
@@ -251,7 +273,6 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
                     currency: nftRef.buyInCurrency,
                     amount: perWinner
                 )
-                // pay is @{FungibleToken.Vault}, matches receiver’s expected type
                 recv.deposit(from: <- pay)
                 i = i + 1
             }
@@ -259,9 +280,10 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     }
 
     // -------------------------
-    // Treasury (per-currency pooled vaults)
+    // Treasury (FLOW goes to /storage/flowTokenVault)
     // -------------------------
 
+    // Legacy-style per-currency paths (used for non-FLOW tokens)
     access(self) fun vaultStoragePath(currency: String): StoragePath {
         return StoragePath(identifier: "FHR_".concat(currency).concat("_Vault"))!
     }
@@ -271,9 +293,34 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     }
 
     // Create or reuse the currency vault:
-    //  - On first use, the incoming payment vault becomes the base vault.
-    //  - Later, we deposit into the stored vault through its receiver cap.
+    //  - For FLOW: use the standard /storage/flowTokenVault and /public/flowTokenReceiver
+    //  - For others: create/use FHR_<CUR>_Vault and an FHR_<CUR>_Receiver
     access(self) fun ensureVaultReady(currency: String, received: @{FungibleToken.Vault}): &{FungibleToken.Receiver} {
+
+        if currency == "FLOW" {
+            let sPath: StoragePath = /storage/flowTokenVault
+            let pPath: PublicPath  = /public/flowTokenReceiver
+
+            // Ensure contract Flow vault exists
+            if self.account.storage.borrow<&{FungibleToken.Vault}>(from: sPath) == nil {
+                self.account.storage.save(
+                    <- FlowToken.createEmptyVault(vaultType: Type<@FlowToken.Vault>()),
+                    to: sPath
+                )
+                if !self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).check() {
+                    let cap = self.account.capabilities.storage.issue<&{FungibleToken.Receiver}>(sPath)
+                    self.account.capabilities.publish(cap, at: pPath)
+                }
+            }
+
+            // Deposit the received funds into Flow vault
+            let recv = self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).borrow()
+                ?? panic("FLOW receiver missing on contract account")
+            recv.deposit(from: <- received)
+            return recv
+        }
+
+        // Non-FLOW tokens (previous behavior)
         let sPath = self.vaultStoragePath(currency: currency)
         let pPath = self.vaultReceiverPublicPath(currency: currency)
 
@@ -292,18 +339,24 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
 
         let recv2 = self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).borrow()
             ?? panic("Receiver missing for currency ".concat(currency))
-        // deposit the owned interface vault into existing receiver
         recv2.deposit(from: <- received)
         return recv2
     }
 
-    // Called by add_entry tx: move payment into treasury
     access(all) fun depositBuyIn(currency: String, payment: @{FungibleToken.Vault}) {
         var _ = self.ensureVaultReady(currency: currency, received: <- payment)
     }
 
-    // Withdraw from treasury for payouts (return interface-typed resource @{FungibleToken.Vault})
     access(all) fun withdrawFromTreasury(currency: String, amount: UFix64): @{FungibleToken.Vault} {
+
+        if currency == "FLOW" {
+            let base = self.account.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
+                from: /storage/flowTokenVault
+            ) ?? panic("Contract Flow vault missing")
+            let taken <- base.withdraw(amount: amount)
+            return <- (taken as @{FungibleToken.Vault})
+        }
+
         let sPath = self.vaultStoragePath(currency: currency)
         let base = self.account.storage.borrow<auth(FungibleToken.Withdraw) &{FungibleToken.Vault}>(from: sPath)
             ?? panic("Treasury vault not found for ".concat(currency))
@@ -312,7 +365,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     }
 
     // -------------------------
-    // Contract Views (required by standard implementations)
+    // Contract Views
     // -------------------------
     access(all) view fun getContractViews(resourceType: Type?): [Type] {
         return [
@@ -369,11 +422,9 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
 
         self.totalSupply = 0
 
-        // Store Admin resource directly (no nested-resource field)
         let admin <- create Admin()
         self.account.storage.save(<- admin, to: self.AdminStoragePath)
 
-        // Store a collection in the contract account & publish a public cap
         let col <- create FastbreakHorseRace.Collection()
         self.account.storage.save(<- col, to: self.CollectionStoragePath)
 
