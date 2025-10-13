@@ -36,6 +36,41 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     )
 
     // -------------------------
+    // Token Table (receiver paths for winners)
+    //
+    // NOTE:
+    //  - For FLOW we DO NOT hard-code addresses; we use standard /public/flowTokenReceiver
+    //  - For other tokens, we hard-code the *receiver public path* to borrow winners’ receivers.
+    //  - Treasury storage inside this contract remains /storage/FHR_<CUR>_Vault (interface-typed).
+    // -------------------------
+    access(self) fun receiverPathFor(currency: String): PublicPath {
+        if currency == "FLOW" {
+            return /public/flowTokenReceiver
+        }
+        if currency == "MVP" {
+            // A.6fd2465f3a22e34c.PetJokicsHorses.Vault
+            return PublicPath(identifier: "PetJokicsHorsesReceiver")!
+        }
+        if currency == "TSHOT" {
+            // A.05b67ba314000b2d.TSHOT.Vault
+            return PublicPath(identifier: "TSHOTTokenReceiver")!
+        }
+        if currency == "BETA" {
+            // A.1e4aa0b87d10b141.EVMVMBridgedToken_d8ad8ae8375aa31bff541e17dc4b4917014ebdaa.Vault
+            return PublicPath(identifier: "EVMVMBridgedToken_d8ad8ae8375aa31bff541e17dc4b4917014ebdaaReceiver")!
+        }
+        if currency == "FROTH" {
+            // A.1e4aa0b87d10b141.EVMVMBridgedToken_b73bf8e6a4477a952e0338e6cc00cc0ce5ad04ba.Vault
+            return PublicPath(identifier: "EVMVMBridgedToken_b73bf8e6a4477a952e0338e6cc00cc0ce5ad04baReceiver")!
+        }
+        if currency == "JUICE" {
+            // A.9db94c9564243ba7.aiSportsJuice.Vault
+            return PublicPath(identifier: "aiSportsJuiceReceiver")!
+        }
+        panic("Unsupported currency ".concat(currency))
+    }
+
+    // -------------------------
     // Contest Entry model
     // -------------------------
     access(all) struct Entry {
@@ -59,7 +94,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         // Contest metadata
         access(all) var displayName: String
         access(all) var fastbreakId: String      // external GUID string
-        access(all) var buyInCurrency: String    // e.g. "FLOW"
+        access(all) var buyInCurrency: String    // e.g. "FLOW", "MVP", "TSHOT", "BETA", "FROTH", "JUICE"
         access(all) var buyInAmount: UFix64      // token units
         access(all) var startTime: UFix64        // unix timestamp (seconds)
         access(all) var hidden: Bool             // UI toggle
@@ -283,7 +318,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             nftUpd.setWinningPrediction(prediction)
         }
 
-        // ---- Payout (manual)
+        // ---- Payout (manual) — receivers provided
         access(all) fun payoutWinners(
             collectionRef: &FastbreakHorseRace.Collection,
             id: UInt64,
@@ -420,11 +455,6 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             let anyRef = col.borrowNFT(contestId) ?? panic("Contest not found")
             let nft = anyRef as! &FastbreakHorseRace.NFT
 
-            // FLOW-only payouts
-            if nft.buyInCurrency != "FLOW" {
-                panic("Scheduled payout supports FLOW only, contest uses ".concat(nft.buyInCurrency))
-            }
-
             // Read CURRENT winningPrediction from the NFT
             let winOpt = nft.winningPrediction
             if winOpt == nil {
@@ -432,16 +462,17 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             }
             let win = winOpt!
 
-            // Build receivers map from winners’ Flow receivers
+            // Build receivers map from winners’ receivers based on currency
+            let recvPath = FastbreakHorseRace.receiverPathFor(currency: nft.buyInCurrency)
             let recvs: {Address: &{FungibleToken.Receiver}} = {}
             var i = 0
             while i < nft.entries.length {
                 let e = nft.entries[i]
                 if e.prediction == win {
                     if recvs[e.wallet] == nil {
-                        let cap = getAccount(e.wallet).capabilities.get<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)
+                        let cap = getAccount(e.wallet).capabilities.get<&{FungibleToken.Receiver}>(recvPath)
                         let r = cap.borrow()
-                            ?? panic("Winner missing /public/flowTokenReceiver: ".concat(e.wallet.toString()))
+                            ?? panic("Winner missing receiver at ".concat(recvPath.toString()).concat(": ").concat(e.wallet.toString()))
                         recvs[e.wallet] = r
                     }
                 }
@@ -464,7 +495,13 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     access(all) fun createPayoutHandler(): @PayoutHandler { return <- create PayoutHandler() }
 
     // -------------------------
-    // Treasury (FLOW uses /storage/flowTokenVault)
+    // Treasury
+    //
+    // FLOW deposits/withdrawals use the canonical Flow vault at:
+    //   /storage/flowTokenVault  +  /public/flowTokenReceiver
+    //
+    // For *other* tokens, we maintain an interface-typed treasury vault per currency at:
+    //   /storage/FHR_<CUR>_Vault  +  /public/FHR_<CUR>_Receiver
     // -------------------------
     access(self) fun vaultStoragePath(currency: String): StoragePath {
         return StoragePath(identifier: "FHR_".concat(currency).concat("_Vault"))!
@@ -495,17 +532,21 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             return recv
         }
 
+        // Non-FLOW: keep a per-currency interface vault owned by the contract
         let sPath = self.vaultStoragePath(currency: currency)
         let pPath = self.vaultReceiverPublicPath(currency: currency)
 
         if self.account.storage.borrow<&{FungibleToken.Vault}>(from: sPath) == nil {
+            // First deposit establishes the concrete vault type for this currency
             self.account.storage.save(<- received, to: sPath)
+
             if !self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).check() {
                 let cap = self.account.capabilities.storage.issue<&{FungibleToken.Receiver}>(sPath)
                 self.account.capabilities.publish(cap, at: pPath)
             }
+
             let recv = self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).borrow()
-                ?? panic("Receiver missing after vault init")
+                ?? panic("Receiver missing after vault init for ".concat(currency))
             return recv
         }
 
@@ -515,6 +556,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         return recv2
     }
 
+    // Called by submitEntry: move payment into treasury
     access(all) fun depositBuyIn(currency: String, payment: @{FungibleToken.Vault}) {
         var _ = self.ensureVaultReady(currency: currency, received: <- payment)
     }

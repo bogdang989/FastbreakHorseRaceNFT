@@ -65,10 +65,13 @@ Submit an entry
 
 Payout (Admin)
 - Distribute winnings based on the actual results to all winning wallets
+- Schedule a payout to allow time to verify results and tweak before actual payout occurs
 
 Destroy a contest (Admin)
 - Either hide for UI or completely destroy NFT
 
-Preview payouts:
-- Submit the winning answer and print out who wins how much based on the answer
-
+Get contest info:
+- Get contest metadata
+- List contests
+- Get contest entries
+- Preview payouts: Submit the winning answer and print out who wins how much based on the answer
