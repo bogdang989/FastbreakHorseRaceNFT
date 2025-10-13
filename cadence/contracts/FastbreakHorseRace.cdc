@@ -200,6 +200,14 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     // -------------------------
     access(all) resource Admin {
 
+        // Ensure Admin methods are called only by the contract owner
+        access(self) fun assertOwner() {
+            pre {
+                self.owner?.address == FastbreakHorseRace.account.address:
+                    "Only the contract owner may call this Admin method"
+            }
+        }
+
         // Mint a new contest NFT with no entries
         access(all) fun createContest(
             displayName: String,
@@ -208,6 +216,8 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             buyInAmount: UFix64,
             startTime: UFix64
         ): @FastbreakHorseRace.NFT {
+            self.assertOwner()
+
             let newID = FastbreakHorseRace.totalSupply + 1
             FastbreakHorseRace.totalSupply = newID
             let nft <- create FastbreakHorseRace.NFT(
@@ -226,6 +236,8 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             collectionRef: auth(NonFungibleToken.Withdraw) &FastbreakHorseRace.Collection,
             id: UInt64
         ) {
+            self.assertOwner()
+
             let nft <- collectionRef.withdraw(withdrawID: id) as! @FastbreakHorseRace.NFT
             destroy nft
         }
@@ -235,6 +247,8 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             collectionRef: &FastbreakHorseRace.Collection,
             id: UInt64
         ) {
+            self.assertOwner()
+
             let anyRef = collectionRef.borrowNFT(id)
                 ?? panic("Contest not found")
             let nftRef = anyRef as! &FastbreakHorseRace.NFT
@@ -248,6 +262,8 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             winningPrediction: String,
             receivers: {Address: &{FungibleToken.Receiver}}
         ) {
+            self.assertOwner()
+
             let anyRef = collectionRef.borrowNFT(id)
                 ?? panic("Contest not found")
             let nftRef = anyRef as! &FastbreakHorseRace.NFT
@@ -343,11 +359,14 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         return recv2
     }
 
+    // Called by submitEntry: move payment into treasury
     access(all) fun depositBuyIn(currency: String, payment: @{FungibleToken.Vault}) {
         var _ = self.ensureVaultReady(currency: currency, received: <- payment)
     }
 
-    access(all) fun withdrawFromTreasury(currency: String, amount: UFix64): @{FungibleToken.Vault} {
+    // Withdraw from treasury for payouts
+    // NOTE: Contract-only so nobody can call it from outside.
+    access(contract) fun withdrawFromTreasury(currency: String, amount: UFix64): @{FungibleToken.Vault} {
 
         if currency == "FLOW" {
             let base = self.account.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
