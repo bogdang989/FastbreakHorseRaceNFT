@@ -17,6 +17,7 @@ access(all) fun main(owner: Address, id: UInt64): {String: AnyStruct} {
     "buyInAmount": nft.buyInAmount,
     "startTime": nft.startTime,
     "hidden": nft.hidden,
-    "entryCount": nft.entries.length
+    "entryCount": nft.entries.length,
+    "winningPrediction": nft.winningPrediction
   }
 }

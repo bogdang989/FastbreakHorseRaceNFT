@@ -4,6 +4,10 @@ import "ViewResolver"
 import "MetadataViews"
 import "FlowToken"
 
+// Forte (Scheduled Transactions)
+import "FlowTransactionScheduler"
+import "FlowTransactionSchedulerUtils"
+
 access(all) contract FastbreakHorseRace: NonFungibleToken {
 
     // -------------------------
@@ -12,6 +16,24 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
     access(all) let CollectionStoragePath: StoragePath
     access(all) let CollectionPublicPath: PublicPath
     access(all) let AdminStoragePath: StoragePath
+
+    // -------------------------
+    // Scheduling (paths for our handler)
+    // -------------------------
+    access(all) let HandlerStoragePath: StoragePath
+    access(all) let HandlerPublicPath: PublicPath
+
+    // -------------------------
+    // Events
+    // -------------------------
+    access(all) event PayoutScheduled(
+        contestId: UInt64,
+        scheduledTxId: UInt64,
+        executeAt: UFix64,
+        priority: UInt8,
+        effort: UInt64,
+        fee: UFix64
+    )
 
     // -------------------------
     // Contest Entry model
@@ -37,13 +59,16 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         // Contest metadata
         access(all) var displayName: String
         access(all) var fastbreakId: String      // external GUID string
-        access(all) var buyInCurrency: String    // e.g. "FLOW" / "MVP" / "BETA" / "TSHOT"
+        access(all) var buyInCurrency: String    // e.g. "FLOW"
         access(all) var buyInAmount: UFix64      // token units
         access(all) var startTime: UFix64        // unix timestamp (seconds)
         access(all) var hidden: Bool             // UI toggle
 
         // Dynamic entries
         access(all) var entries: [Entry]
+
+        // Mutable winner configuration (set by admin; read at payout time)
+        access(all) var winningPrediction: String?   // nil until set
 
         init(
             id: UInt64,
@@ -61,13 +86,12 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             self.startTime = startTime
             self.hidden = false
             self.entries = []
+            self.winningPrediction = nil
         }
 
         // INTERNAL: append an entry (no payment) — only callable from this contract.
         access(contract) fun addEntry(wallet: Address, prediction: String, time: UFix64) {
-            pre {
-                time < self.startTime: "Contest already started"
-            }
+            pre { time < self.startTime: "Contest already started" }
             let e = Entry(wallet: wallet, prediction: prediction, timeOfEntry: time)
             self.entries.append(e)
         }
@@ -84,21 +108,22 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
                 payment.balance == self.buyInAmount: "Payment must equal buy-in amount"
             }
 
-            // 1) Deposit the funds to the contract treasury (per currency)
             FastbreakHorseRace.depositBuyIn(
                 currency: self.buyInCurrency,
                 payment: <- payment
             )
 
-            // 2) Record the entry
             let e = Entry(wallet: wallet, prediction: prediction, timeOfEntry: time)
             self.entries.append(e)
         }
 
-        // UI toggle
-        access(all) fun toggleHidden() {
-            self.hidden = !self.hidden
+        // Admin-only setter for winning prediction (entitlement-gated)
+        access(NonFungibleToken.Update) fun setWinningPrediction(_ p: String?) {
+            self.winningPrediction = p
         }
+
+        // UI toggle
+        access(all) fun toggleHidden() { self.hidden = !self.hidden }
 
         // Optional helper (some UIs call from token type)
         access(all) fun createEmptyCollection(): @{NonFungibleToken.Collection} {
@@ -146,9 +171,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
 
         access(all) var ownedNFTs: @{UInt64: {NonFungibleToken.NFT}}
 
-        init() {
-            self.ownedNFTs <- {}
-        }
+        init() { self.ownedNFTs <- {} }
 
         // Standard views
         access(all) view fun getSupportedNFTTypes(): {Type: Bool} {
@@ -177,16 +200,16 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         }
 
         // Views
-        access(all) view fun getIDs(): [UInt64] {
-            return self.ownedNFTs.keys
-        }
+        access(all) view fun getIDs(): [UInt64] { return self.ownedNFTs.keys }
+        access(all) view fun getLength(): Int { return self.ownedNFTs.length }
+        access(all) view fun borrowNFT(_ id: UInt64): &{NonFungibleToken.NFT}? { return &self.ownedNFTs[id] }
 
-        access(all) view fun getLength(): Int {
-            return self.ownedNFTs.length
-        }
-
-        access(all) view fun borrowNFT(_ id: UInt64): &{NonFungibleToken.NFT}? {
-            return &self.ownedNFTs[id]
+        // Entitled, typed ref for admin updates (e.g., setWinningPrediction)
+        access(all) fun borrowContestForUpdate(_ id: UInt64): auth(NonFungibleToken.Update) &FastbreakHorseRace.NFT? {
+            if let anyRef = &self.ownedNFTs[id] as auth(NonFungibleToken.Update) &{NonFungibleToken.NFT}? {
+                return anyRef as! auth(NonFungibleToken.Update) &FastbreakHorseRace.NFT
+            }
+            return nil
         }
 
         // Optional helper for UIs
@@ -208,7 +231,7 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             }
         }
 
-        // Mint a new contest NFT with no entries
+        // ---- Contest lifecycle
         access(all) fun createContest(
             displayName: String,
             fastbreakId: String,
@@ -217,7 +240,6 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             startTime: UFix64
         ): @FastbreakHorseRace.NFT {
             self.assertOwner()
-
             let newID = FastbreakHorseRace.totalSupply + 1
             FastbreakHorseRace.totalSupply = newID
             let nft <- create FastbreakHorseRace.NFT(
@@ -231,31 +253,37 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
             return <- nft
         }
 
-        // Burn a contest NFT (needs Withdraw entitlement on the collection ref)
         access(all) fun destroyContest(
             collectionRef: auth(NonFungibleToken.Withdraw) &FastbreakHorseRace.Collection,
             id: UInt64
         ) {
             self.assertOwner()
-
             let nft <- collectionRef.withdraw(withdrawID: id) as! @FastbreakHorseRace.NFT
             destroy nft
         }
 
-        // Toggle hidden flag (only needs a read ref)
         access(all) fun toggleHidden(
             collectionRef: &FastbreakHorseRace.Collection,
             id: UInt64
         ) {
             self.assertOwner()
-
-            let anyRef = collectionRef.borrowNFT(id)
-                ?? panic("Contest not found")
+            let anyRef = collectionRef.borrowNFT(id) ?? panic("Contest not found")
             let nftRef = anyRef as! &FastbreakHorseRace.NFT
             nftRef.toggleHidden()
         }
 
-        // Payout 90% of total buy-ins equally to all matching winners
+        // ---- Winners config (on the NFT itself, via entitled setter)
+        access(all) fun setWinningPrediction(contestId: UInt64, prediction: String) {
+            self.assertOwner()
+            let col = FastbreakHorseRace.account.storage.borrow<&FastbreakHorseRace.Collection>(
+                from: FastbreakHorseRace.CollectionStoragePath
+            ) ?? panic("Owner collection not found")
+            let nftUpd = col.borrowContestForUpdate(contestId)
+                ?? panic("Contest not found or cannot borrow update ref")
+            nftUpd.setWinningPrediction(prediction)
+        }
+
+        // ---- Payout (manual)
         access(all) fun payoutWinners(
             collectionRef: &FastbreakHorseRace.Collection,
             id: UInt64,
@@ -264,13 +292,12 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         ) {
             self.assertOwner()
 
-            let anyRef = collectionRef.borrowNFT(id)
-                ?? panic("Contest not found")
+            let anyRef = collectionRef.borrowNFT(id) ?? panic("Contest not found")
             let nftRef = anyRef as! &FastbreakHorseRace.NFT
             let entries = nftRef.entries
 
-            let winners = entries.filter(view fun (element: FastbreakHorseRace.Entry): Bool {
-                return element.prediction == winningPrediction
+            let winners = entries.filter(view fun (e: FastbreakHorseRace.Entry): Bool {
+                return e.prediction == winningPrediction
             })
             if winners.length == 0 {
                 log("No winners for ".concat(winningPrediction))
@@ -293,31 +320,164 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
                 i = i + 1
             }
         }
+
+        // ---- Schedule payout (auto, reads NFT.winningPrediction at execution)
+        access(all) fun schedulePayout(
+            contestId: UInt64,
+            executeAfterSeconds: UFix64,
+            feeAmount: UFix64,
+            priority: UInt8,
+            effort: UInt64
+        ) {
+            self.assertOwner()
+
+            // 0) Ensure we have a scheduler Manager in storage
+            if !FastbreakHorseRace.account.storage.check<@{FlowTransactionSchedulerUtils.Manager}>(
+                from: FlowTransactionSchedulerUtils.managerStoragePath
+            ) {
+                let mgr <- FlowTransactionSchedulerUtils.createManager()
+                FastbreakHorseRace.account.storage.save(<- mgr, to: FlowTransactionSchedulerUtils.managerStoragePath)
+
+                // optional read-only cap
+                let cap = FastbreakHorseRace.account.capabilities.storage.issue<&{FlowTransactionSchedulerUtils.Manager}>(
+                    FlowTransactionSchedulerUtils.managerStoragePath
+                )
+                FastbreakHorseRace.account.capabilities.publish(cap, at: FlowTransactionSchedulerUtils.managerPublicPath)
+            }
+
+            // 1) Ensure handler exists in storage
+            if !FastbreakHorseRace.account.storage.check<@FastbreakHorseRace.PayoutHandler>(
+                from: FastbreakHorseRace.HandlerStoragePath
+            ) {
+                let h <- FastbreakHorseRace.createPayoutHandler()
+                FastbreakHorseRace.account.storage.save(<- h, to: FastbreakHorseRace.HandlerStoragePath)
+            }
+
+            // 2) Issue the EXECUTE-authorized handler capability from storage
+            let execHandlerCap = FastbreakHorseRace.account.capabilities.storage.issue<
+                auth(FlowTransactionScheduler.Execute) &{FlowTransactionScheduler.TransactionHandler}
+            >(FastbreakHorseRace.HandlerStoragePath)
+
+            // 3) Compute executeAt
+            let now = getCurrentBlock().timestamp
+            let executeAt = now + executeAfterSeconds
+
+            // 4) Withdraw FLOW fees from the contract’s Flow vault
+            let vault = FastbreakHorseRace.account.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
+                from: /storage/flowTokenVault
+            ) ?? panic("Contract Flow vault missing for fees")
+            let fees <- vault.withdraw(amount: feeAmount) as! @FlowToken.Vault
+
+            // 5) Borrow manager and schedule with the exec-capability
+            let manager = FastbreakHorseRace.account.storage.borrow<
+                auth(FlowTransactionSchedulerUtils.Owner) &{FlowTransactionSchedulerUtils.Manager}
+            >(from: FlowTransactionSchedulerUtils.managerStoragePath)
+                ?? panic("Manager not found after creation")
+
+            let pr = FlowTransactionScheduler.Priority(rawValue: priority)
+                ?? FlowTransactionScheduler.Priority.Medium
+
+            let scheduledId = manager.schedule(
+                handlerCap: execHandlerCap,
+                data: contestId,                // pass contestId; handler will read NFT.winningPrediction
+                timestamp: executeAt,
+                priority: pr,
+                executionEffort: effort,
+                fees: <- fees
+            )
+
+            emit PayoutScheduled(
+                contestId: contestId,
+                scheduledTxId: scheduledId,
+                executeAt: executeAt,
+                priority: priority,
+                effort: effort,
+                fee: feeAmount
+            )
+        }
     }
 
     // -------------------------
-    // Treasury (FLOW goes to /storage/flowTokenVault)
+    // Scheduled Transaction Handler (executes later)
     // -------------------------
+    access(all) resource PayoutHandler: FlowTransactionScheduler.TransactionHandler {
+        // The protocol calls this with EXECUTE entitlement
+        access(FlowTransactionScheduler.Execute)
+        fun executeTransaction(id: UInt64, data: AnyStruct?) {
+            // contestId passed in data
+            let contestId = data as! UInt64
 
-    // Legacy-style per-currency paths (used for non-FLOW tokens)
+            // Borrow owner collection & Admin
+            let col = FastbreakHorseRace.account.storage.borrow<&FastbreakHorseRace.Collection>(
+                from: FastbreakHorseRace.CollectionStoragePath
+            ) ?? panic("Owner collection not found")
+
+            let admin = FastbreakHorseRace.account.storage.borrow<&FastbreakHorseRace.Admin>(
+                from: FastbreakHorseRace.AdminStoragePath
+            ) ?? panic("Admin not found")
+
+            // Borrow contest
+            let anyRef = col.borrowNFT(contestId) ?? panic("Contest not found")
+            let nft = anyRef as! &FastbreakHorseRace.NFT
+
+            // FLOW-only payouts
+            if nft.buyInCurrency != "FLOW" {
+                panic("Scheduled payout supports FLOW only, contest uses ".concat(nft.buyInCurrency))
+            }
+
+            // Read CURRENT winningPrediction from the NFT
+            let winOpt = nft.winningPrediction
+            if winOpt == nil {
+                panic("Winning prediction not set on contest ".concat(contestId.toString()))
+            }
+            let win = winOpt!
+
+            // Build receivers map from winners’ Flow receivers
+            let recvs: {Address: &{FungibleToken.Receiver}} = {}
+            var i = 0
+            while i < nft.entries.length {
+                let e = nft.entries[i]
+                if e.prediction == win {
+                    if recvs[e.wallet] == nil {
+                        let cap = getAccount(e.wallet).capabilities.get<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)
+                        let r = cap.borrow()
+                            ?? panic("Winner missing /public/flowTokenReceiver: ".concat(e.wallet.toString()))
+                        recvs[e.wallet] = r
+                    }
+                }
+                i = i + 1
+            }
+
+            // Delegate to Admin payout (owner-guarded + uses contract-only withdraw)
+            admin.payoutWinners(
+                collectionRef: col,
+                id: contestId,
+                winningPrediction: win,
+                receivers: recvs
+            )
+        }
+
+        access(all) view fun getViews(): [Type] { return [] }
+        access(all) fun resolveView(_ view: Type): AnyStruct? { return nil }
+    }
+
+    access(all) fun createPayoutHandler(): @PayoutHandler { return <- create PayoutHandler() }
+
+    // -------------------------
+    // Treasury (FLOW uses /storage/flowTokenVault)
+    // -------------------------
     access(self) fun vaultStoragePath(currency: String): StoragePath {
         return StoragePath(identifier: "FHR_".concat(currency).concat("_Vault"))!
     }
-
     access(self) fun vaultReceiverPublicPath(currency: String): PublicPath {
         return PublicPath(identifier: "FHR_".concat(currency).concat("_Receiver"))!
     }
 
-    // Create or reuse the currency vault:
-    //  - For FLOW: use the standard /storage/flowTokenVault and /public/flowTokenReceiver
-    //  - For others: create/use FHR_<CUR>_Vault and an FHR_<CUR>_Receiver
     access(self) fun ensureVaultReady(currency: String, received: @{FungibleToken.Vault}): &{FungibleToken.Receiver} {
-
         if currency == "FLOW" {
             let sPath: StoragePath = /storage/flowTokenVault
             let pPath: PublicPath  = /public/flowTokenReceiver
 
-            // Ensure contract Flow vault exists
             if self.account.storage.borrow<&{FungibleToken.Vault}>(from: sPath) == nil {
                 self.account.storage.save(
                     <- FlowToken.createEmptyVault(vaultType: Type<@FlowToken.Vault>()),
@@ -329,27 +489,23 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
                 }
             }
 
-            // Deposit the received funds into Flow vault
             let recv = self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).borrow()
                 ?? panic("FLOW receiver missing on contract account")
             recv.deposit(from: <- received)
             return recv
         }
 
-        // Non-FLOW tokens (previous behavior)
         let sPath = self.vaultStoragePath(currency: currency)
         let pPath = self.vaultReceiverPublicPath(currency: currency)
 
         if self.account.storage.borrow<&{FungibleToken.Vault}>(from: sPath) == nil {
             self.account.storage.save(<- received, to: sPath)
-
             if !self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).check() {
                 let cap = self.account.capabilities.storage.issue<&{FungibleToken.Receiver}>(sPath)
                 self.account.capabilities.publish(cap, at: pPath)
             }
-
             let recv = self.account.capabilities.get<&{FungibleToken.Receiver}>(pPath).borrow()
-                ?? panic("Receiver missing after vault init for ".concat(currency))
+                ?? panic("Receiver missing after vault init")
             return recv
         }
 
@@ -359,15 +515,12 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         return recv2
     }
 
-    // Called by submitEntry: move payment into treasury
     access(all) fun depositBuyIn(currency: String, payment: @{FungibleToken.Vault}) {
         var _ = self.ensureVaultReady(currency: currency, received: <- payment)
     }
 
-    // Withdraw from treasury for payouts
-    // NOTE: Contract-only so nobody can call it from outside.
+    // Contract-only withdraw for payouts
     access(contract) fun withdrawFromTreasury(currency: String, amount: UFix64): @{FungibleToken.Vault} {
-
         if currency == "FLOW" {
             let base = self.account.storage.borrow<auth(FungibleToken.Withdraw) &FlowToken.Vault>(
                 from: /storage/flowTokenVault
@@ -439,14 +592,18 @@ access(all) contract FastbreakHorseRace: NonFungibleToken {
         self.CollectionPublicPath  = /public/FastbreakHorseRaceCollection
         self.AdminStoragePath      = /storage/FastbreakHorseRaceAdmin
 
+        self.HandlerStoragePath    = /storage/FHR_PayoutHandler
+        self.HandlerPublicPath     = /public/FHR_PayoutHandler
+
         self.totalSupply = 0
 
+        // Save Admin resource
         let admin <- create Admin()
         self.account.storage.save(<- admin, to: self.AdminStoragePath)
 
+        // Save a collection & publish cap
         let col <- create FastbreakHorseRace.Collection()
         self.account.storage.save(<- col, to: self.CollectionStoragePath)
-
         let colCap = self.account.capabilities.storage.issue<&FastbreakHorseRace.Collection>(self.CollectionStoragePath)
         self.account.capabilities.publish(colCap, at: self.CollectionPublicPath)
     }
