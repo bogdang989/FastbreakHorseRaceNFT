@@ -1,8 +1,8 @@
 ## FastbreakHorseRaceNFT
 
-Deployed on **testnet**: A.8abec69aecbca039.FastbreakHorseRace
+Smart contract contest management deployed on **testnet**: A.8abec69aecbca039.FastbreakHorseRace
 
-Uses on **mainnet**:
+Production contest use on **mainnet**:
 - A.6fd2465f3a22e34c.PetJokicsHorses ($MVP)
 - A.1e4aa0b87d10b141.EVMVMBridgedToken_b73bf8e6a4477a952e0338e6cc00cc0ce5ad04ba ($FROTH bridged from EVM)
 - A.9db94c9564243ba7.aiSportsJuice ($JUICE)
