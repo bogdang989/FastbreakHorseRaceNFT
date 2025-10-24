@@ -1,6 +1,7 @@
 ## FastbreakHorseRaceNFT
 
-Smart contract contest management deployed on **testnet**: A.8abec69aecbca039.FastbreakHorseRace
+Smart contract contest management deployed on **testnet**: 
+- A.8abec69aecbca039.FastbreakHorseRace
 
 Production contest use on **mainnet**:
 - A.6fd2465f3a22e34c.PetJokicsHorses ($MVP)
