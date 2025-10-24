@@ -1,5 +1,7 @@
 ## FastbreakHorseRaceNFT
 
+Deployed on **testnet**: A.8abec69aecbca039.FastbreakHorseRace
+
 Are you playing NBA Top Shot? You feel good about yourself on a given day? 
 Now you are able to boost your winnings by playing `Fastbreak Horse Race`, a mini game built on top of NBA Top Shot Fastbreak, where you predict which user ranks highest in a daily game.  
 If you feel good about your lineup, bet on yourself and win even more!  
