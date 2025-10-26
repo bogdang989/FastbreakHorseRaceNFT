@@ -1,129 +1,74 @@
-## FastbreakHorseRaceNFT
+
+# 🏇 FastBreak Horse Race — Predict, Bet & Boost on NBA Top Shot
+
+**Live:** [https://mvponflow.cc/fastbreak](https://mvponflow.cc/fastbreak)
 
 Smart contract contest management deployed on **testnet**: 
 - A.8abec69aecbca039.FastbreakHorseRace
 
-Production contest use on **mainnet**:
+Production contest uses on **mainnet**:
 - A.6fd2465f3a22e34c.PetJokicsHorses ($MVP)
 - A.1e4aa0b87d10b141.EVMVMBridgedToken_b73bf8e6a4477a952e0338e6cc00cc0ce5ad04ba ($FROTH bridged from EVM)
 - A.9db94c9564243ba7.aiSportsJuice ($JUICE)
+- A.05b67ba314000b2d.TSHOT ($TSHOT)
 
-## About project
+---
 
-Are you playing NBA Top Shot? You feel good about yourself on a given day? 
-Now you are able to boost your winnings by playing `Fastbreak Horse Race`, a mini game built on top of NBA Top Shot Fastbreak, where you predict which user ranks highest in a daily game.  
-If you feel good about your lineup, bet on yourself and win even more!  
-If you are tired of seeing someone else win in fastbreak all the time, bet on them and monetize your piled up frustration.
+## 🎯 Short Summary
 
+**FastBreak Horse Race** turns **NBA Top Shot FastBreak leaderboards** into a live on-chain prediction game.  
+Players predict which competitor will win each FastBreak run, bet **Flow tokens** to boost their potential winnings, and even stake on themselves.
 
-## How it works
-- You chip in and predict which TS user will rank highest on the daily Fastbreak game on NBA Top Shot.
-- You can bet on yourself or on someone else if you feel confident about them
-- The higher your selected TS user ranks in Fastbreak, the higher you rank
-- Unlimited entries, you can bet on anyone 
+---
 
+## 🏀 The Concept
 
-## Interacting with the smart contract
-### Features (Implemented so far)
+Every day, **NBA Top Shot** runs FastBreak contests — competitive stat-based challenges between collectors.  
+**FastBreak Horse Race** adds a prediction and wagering layer on top of those contests.
 
-Create a contest (Admin):
-- Create a contest tied to a fastbreak daily game. This mints a contest NFT to the contract address
+---
 
-Submit an entry
-- Pay entry and submit your prediction
+## ⚙️ How It Works
 
-Payout (Admin)
-- Distribute winnings based on the actual results to all winning wallets
-- (Forte Scheduled Transaction) Schedule a payout to allow time to apply stat corrections before actual payout occurs
+### 🏁 Contest Setup
+The admin launches a contest tied to a specific **FastBreak ID** on Top Shot.
 
-Destroy a contest (Admin)
-- We can either hide a contest from UI by marking it hidden or completely destroy the contest NFT. 
-- Complete audit trail is still available on the blockchain through historic transactions and events!
+### 🔮 Predictions Phase
+- Users predict the winner (any Top Shot username).  
+- A detailed history of previous performance for each user is available for stat nerds.  
+- They can wager **Flow tokens** to back their pick.  
+- Bets remain hidden until the game starts.
 
-Get contest info:
-- Get contest metadata
-- List contests
-- Get contest entries
-- Preview payouts: Input the winning prediction and print out who wins how much based on the answer
+### 🔒 Lock-In & Results
+- Once the FastBreak starts, predictions close.  
+- After the last game of the day is over, the pot is paid to the player who selected the **highest-ranked user** among predictions.
 
+---
 
-Set variables for later
-TESTNET:
-```
-$SIGNER = "fbhorseracedev2"
-$CONTRACTADDR = "0x8abec69aecbca039"
-$FLOWNETWORK = "testnet"
-```
+## 💡 Built With
 
-EMULATOR:
-```
-$SIGNER = "emulator-account"
-$CONTRACTADDR = "0xf8d6e0586b0a20c7"
-$FLOWNETWORK = "emulator"
-```
+- 🧠 **Flow Smart Contract:** For contest, prediction, and payout tracking  
+- ⚙️ **Flow Cadence Transactions:** Handling buy-ins and prize distribution  
+- 🏀 **NBA Top Shot API:** Fetching real contest results for validation  
 
-Update contract:
-```
-flow project deploy --network $FLOWNETWORK --update 
-```
+---
 
-List accounts:
-```
-flow accounts list
-```
+## 💰 The Gameplay Loop
 
-Add a deployment:
-```
-flow config add deployment
-```
+1. 🕹️ **Join** a FastBreak contest channel  
+2. 🏇 **Predict** the winner — or back yourself  
+3. 📈 **Watch** the leaderboard evolve live  
+4. 🪙 **Earn** token rewards for correct predictions  
 
-Create a contest (ADMIN):
-```
-flow transactions send .\cadence\transactions\create_contest.cdc "NBA Finals Game 1" "fb-123e4567-e89b-12d3-a456-426614174000" "FLOW" 1.00 1764501000.0 --signer $SIGNER -n $FLOWNETWORK
-```
+---
 
-List contests:
-```
-flow scripts execute .\cadence\scripts\list_contests.cdc $CONTRACTADDR -n $FLOWNETWORK
-```
+## 🧱 Built During the Hackathon
 
-Add entry:
-```
-flow transactions send .\cadence\transactions\add_entry.cdc $CONTRACTADDR 1 "Nuggets" --signer $SIGNER -n $FLOWNETWORK
-```
+During the hackathon, the focus was on bringing contest logic fully on-chain and expanding the Dapper ecosystem’s gaming layer.  
 
-Get contest info:
-```
-flow scripts execute .\cadence\scripts\get_contest_info.cdc $CONTRACTADDR 1 -n $FLOWNETWORK
-```
+### Key Milestones
 
-Get contest entries:
-```
-flow scripts execute .\cadence\scripts\get_contest_entries.cdc $CONTRACTADDR 1 -n $FLOWNETWORK
-```
-
-Preview payouts:
-```
-flow scripts execute .\cadence\scripts\preview_payout.cdc $CONTRACTADDR 1 "Nuggets" -n $FLOWNETWORK
-```
-
-Execute payouts (ADMIN):
-```
-flow transactions send .\cadence\transactions\payout_winners.cdc 1 "Nuggets" --signer $SIGNER -n $FLOWNETWORK
-```
-
-Hide contest from UI (ADMIN):
-```
-flow transactions send .\cadence\transactions\toggle_hidden.cdc 1 --signer $SIGNER -n $FLOWNETWORK
-```
-
-Delete a contest NFT (ADMIN):
-```
-flow transactions send .\cadence\transactions\destroy_contest.cdc 1 --signer $SIGNER -n $FLOWNETWORK
-```
-
-Schedule payout using forte scheduled TXN (ADMIN):
-```
-flow transactions send .\cadence\transactions\schedule_payout_winners.cdc 1 "Nuggets" 30.0 0.10 1 1000 --signer $SIGNER -n $FLOWNETWORK
-```
+- 🪙 **Integrated $JUICE and $FROTH tokens** as native contest currencies — multiple slates already successfully played.  
+- ⚙️ **Moved contest tracking logic** from a traditional SQL database into a **Flow smart contract**, enabling on-chain transparency for entries, wagers, and results *(on testnet).*  
+- 📊 **Executed full contest cycles** using live FastBreak data from the **NBA Top Shot API** — from prediction to payout.
 
