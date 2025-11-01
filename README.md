@@ -3,6 +3,8 @@
 
 **Live:** [https://mvponflow.cc/fastbreak](https://mvponflow.cc/fastbreak)
 
+**Built on Flow blockchain**
+
 Smart contract contest management deployed on **testnet**: 
 - A.8abec69aecbca039.FastbreakHorseRace
 
